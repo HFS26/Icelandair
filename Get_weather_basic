@@ -1,0 +1,37 @@
+import requests
+import pandas as pd
+
+API_KEY = "JV2EW5EWN94HGNDSXGT72E3U8"
+LOCATION = "Keflavik, Iceland"
+START_DATE = "2025-01-01"
+END_DATE = "2025-03-31"
+
+url = (
+    f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/"
+    f"{LOCATION}/{START_DATE}/{END_DATE}"
+    f"?unitGroup=metric&include=days&key={API_KEY}&contentType=json"
+)
+
+response = requests.get(url)
+data = response.json()
+
+records = []
+for day in data.get("days", []):
+    records.append({
+        "date": day.get("datetime"),
+        "tempmax": day.get("tempmax"),
+        "tempmin": day.get("tempmin"),
+        "temp": day.get("temp"),
+        "humidity": day.get("humidity"),
+        "windspeed": day.get("windspeed"),
+        "pressure": day.get("pressure"),
+        "precip": day.get("precip"),
+        "snow": day.get("snow"),
+        "visibility": day.get("visibility"),
+        "cloudcover": day.get("cloudcover"),
+        "conditions": day.get("conditions")
+    })
+
+df = pd.DataFrame(records)
+df.to_csv("KEF_weather_Jan_Mar_2025.csv", index=False)
+print("✅ Weather data for KEF saved to KEF_weather_Jan_Mar_2025.csv")

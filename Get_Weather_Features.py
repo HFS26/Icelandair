@@ -5,19 +5,51 @@ from datetime import datetime
 # === SETTINGS ===
 API_KEY = "JV2EW5EWN94HGNDSXGT72E3U8"
 
-# Map known airports to queryable location names (you can add more)
-AIRPORT_LOCATIONS = {
-    "KEF": "Keflavik, Iceland",
-    "JFK": "New York JFK, USA",
-    "LHR": "London Heathrow, UK",
-    "HND": "Tokyo Haneda, Japan",
-    "SYD": "Sydney, Australia",
-    "VRN": "Verona, Italy"
-}
+# === LOAD FLIGHT DATA ===
+df = pd.read_csv("flight_legs_cleaned_v2.csv", header=None)
+df.columns = [f"col_{i+1}" for i in range(df.shape[1])]  # Auto-generate headers
+
+# === IDENTIFY LIKELY COLUMN INDEXES ===
+# Find columns that contain 3-letter uppercase airport codes (IATA codes)
+origin_candidates = []
+destination_candidates = []
+
+for col in df.columns:
+    unique_vals = df[col].dropna().astype(str)
+    code_like = unique_vals[unique_vals.str.match(r"^[A-Z]{3}$")]
+    if len(code_like) > len(df) * 0.05:  # heuristic threshold
+        if not origin_candidates:
+            origin_candidates.append(col)
+        else:
+            destination_candidates.append(col)
+
+# Assume first found is Origin, second is Destination
+origin_col = origin_candidates[0] if origin_candidates else "col_3"
+destination_col = destination_candidates[0] if destination_candidates else "col_6"
+
+# Find columns with date/time values
+datetime_candidates = [c for c in df.columns if df[c].astype(str).str.contains(r"\d{4}-\d{2}-\d{2}").any()]
+dep_time_col = datetime_candidates[0] if len(datetime_candidates) > 0 else "col_4"
+arr_time_col = datetime_candidates[1] if len(datetime_candidates) > 1 else "col_5"
+
+print(f"Detected columns:")
+print(f"  Origin -> {origin_col}")
+print(f"  Destination -> {destination_col}")
+print(f"  Scheduled Departure -> {dep_time_col}")
+print(f"  Scheduled Arrival -> {arr_time_col}")
+
+# === CONVERT DATETIMES ===
+df[dep_time_col] = pd.to_datetime(df[dep_time_col], format="%m/%d/%Y %H:%M", errors="coerce")
+df[arr_time_col] = pd.to_datetime(df[arr_time_col], format="%m/%d/%Y %H:%M", errors="coerce")
+
+
+# === AIRPORT DICTIONARY ===
+# Extract all unique airport codes
+unique_airports = set(df[origin_col].dropna().astype(str).unique()) | set(df[destination_col].dropna().astype(str).unique())
+AIRPORT_LOCATIONS = {code: code for code in unique_airports}
 
 # === WEATHER FETCH FUNCTION ===
 def get_weather(location, date_str, hour_str):
-    """Fetch hourly weather for given location, date, and hour."""
     url = (
         f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/"
         f"{location}/{date_str}/{date_str}"
@@ -44,42 +76,24 @@ def get_weather(location, date_str, hour_str):
         return {}
     return {}
 
-# === LOAD FLIGHT DATA ===
-df = pd.read_csv("flight_legs_cleaned_v2.csv", header=None)
-
-# Rename columns for clarity (based on your structure)
-df.columns = [
-    "FlightDate","FlightNumber","Origin","SchedDepDateTime",
-    "SchedArrDateTime","Destination","Dep2","Arr2","Class",
-    "FlightType","DelayReason","DelayCategory","DelayDescription",
-    "DelayCount","Status"
-]
-
-# Clean datetime formats
-df["SchedDepDateTime"] = pd.to_datetime(df["SchedDepDateTime"], errors="coerce")
-df["SchedArrDateTime"] = pd.to_datetime(df["SchedArrDateTime"], errors="coerce")
-
-# Prepare containers for weather data
+# === FETCH WEATHER DATA ===
 origin_weather = []
 dest_weather = []
 
-# === FETCH LOOP ===
 for idx, row in df.iterrows():
-    # Origin airport and departure
-    origin_code = row["Origin"]
-    dest_code = row["Destination"]
+    origin_code = row[origin_col]
+    dest_code = row[destination_col]
+    dep_time = row[dep_time_col]
+    arr_time = row[arr_time_col]
 
-    dep_time = row["SchedDepDateTime"]
-    arr_time = row["SchedArrDateTime"]
-
-    if pd.notna(dep_time) and origin_code in AIRPORT_LOCATIONS:
+    if pd.notna(dep_time) and isinstance(origin_code, str):
         dep_date = dep_time.strftime("%Y-%m-%d")
         dep_hour = dep_time.strftime("%H:%M:%S")
         origin_weather.append(get_weather(AIRPORT_LOCATIONS[origin_code], dep_date, dep_hour))
     else:
         origin_weather.append({})
 
-    if pd.notna(arr_time) and dest_code in AIRPORT_LOCATIONS:
+    if pd.notna(arr_time) and isinstance(dest_code, str):
         arr_date = arr_time.strftime("%Y-%m-%d")
         arr_hour = arr_time.strftime("%H:%M:%S")
         dest_weather.append(get_weather(AIRPORT_LOCATIONS[dest_code], arr_date, arr_hour))
